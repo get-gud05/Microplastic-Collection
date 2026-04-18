@@ -1,6 +1,11 @@
+# =========================
+# MAIN BACKEND (FASTAPI)
+# =========================
+
 from fastapi import FastAPI
 import numpy as np
 import joblib
+import time
 
 app = FastAPI()
 
@@ -12,15 +17,33 @@ pca = joblib.load("fusion_pca.pkl")
 threshold = joblib.load("fusion_threshold.pkl")
 
 # -------------------------
-# HELPER
+# GLOBAL STATE (LATEST DATA)
+# -------------------------
+state = {
+    "land": None,
+    "water": None,
+    "air": None
+}
+
+last_result = {
+    "risk_score": 0.0,
+    "decision": 0
+}
+
+# -------------------------
+# HELPER FUNCTIONS
 # -------------------------
 def normalize(x):
     return x / (np.linalg.norm(x) + 1e-8)
 
-def run_fusion(air_emb, air_score, water_emb, water_probs, land_emb):
-    air_emb = normalize(air_emb)
-    water_emb = normalize(water_emb)
-    land_emb = normalize(land_emb)
+def run_fusion(land, water, air):
+    air_emb = normalize(np.array(air["air_emb"]))
+    air_score = air["air_score"]
+
+    water_emb = normalize(np.array(water["water_emb"]))
+    water_probs = np.array(water["water_probs"])
+
+    land_emb = normalize(np.array(land["land_emb"]))
 
     x = np.hstack([
         air_emb,
@@ -38,62 +61,100 @@ def run_fusion(air_emb, air_score, water_emb, water_probs, land_emb):
     return prob, decision
 
 
-@app.post("/predict")
-def predict(data: dict):
+# -------------------------
+# OPTIONAL: TIME SLOT LOGIC
+# -------------------------
+def get_current_slot():
+    t = int(time.time()) % 6
 
-    air_emb = np.array(data["air_emb"])
-    air_score = data["air_score"]
-    water_emb = np.array(data["water_emb"])
-    water_probs = np.array(data["water_probs"])
-    land_emb = np.array(data["land_emb"])
+    if 0 <= t < 2:
+        return "land"
+    elif 2 <= t < 4:
+        return "water"
+    else:
+        return "air"
 
-    prob, decision = run_fusion(
-        air_emb, air_score, water_emb, water_probs, land_emb
-    )
 
+# =========================
+# 1. INGEST (MAIN ENTRY)
+# =========================
+@app.post("/ingest")
+def ingest(data: dict):
+
+    # OPTION A (recommended): slot from hardware
+    slot = data.get("slot")
+
+    # OPTION B: backend decides slot
+    if slot is None:
+        slot = get_current_slot()
+
+    payload = data["data"]
+
+    state[slot] = payload
+
+    response = {
+        "active_slot": slot,
+        "status": "stored"
+    }
+
+    # -------------------------
+    # RUN FUSION IF ALL AVAILABLE
+    # -------------------------
+    if all(state.values()):
+        prob, decision = run_fusion(
+            state["land"],
+            state["water"],
+            state["air"]
+        )
+
+        last_result["risk_score"] = float(prob)
+        last_result["decision"] = int(decision)
+
+        response["fusion"] = last_result
+
+    return response
+
+
+# =========================
+# 2. PREDICT
+# =========================
+@app.get("/predict")
+def predict():
     return {
-        "risk_score": float(prob),
-        "microplastic_detected": bool(decision)
+        "risk_score": last_result["risk_score"],
+        "microplastic_detected": bool(last_result["decision"])
     }
 
 
-@app.post("/collect")
-def collect(data: dict):
+# =========================
+# 3. COLLECTION TRIGGER
+# =========================
+@app.get("/collect")
+def collect():
 
-    air_emb = np.array(data["air_emb"])
-    air_score = data["air_score"]
-    water_emb = np.array(data["water_emb"])
-    water_probs = np.array(data["water_probs"])
-    land_emb = np.array(data["land_emb"])
-
-    prob, decision = run_fusion(
-        air_emb, air_score, water_emb, water_probs, land_emb
-    )
-
-    if decision == 1:
-        # HERE you trigger hardware (ESP / relay)
+    if last_result["decision"] == 1:
+        # HERE: trigger ESP / relay / motor
         return {
             "action": "COLLECTION ACTIVATED",
-            "risk_score": float(prob)
+            "risk_score": last_result["risk_score"]
         }
-    else:
-        return {
-            "action": "NO ACTION",
-            "risk_score": float(prob)
-        }
-
-
-
-@app.post("/status")
-def status(data: dict):
-
-    air_score = data["air_score"]
-    water_probs = data["water_probs"]
-    
-    land_signal = float(np.mean(data["land_emb"]))
 
     return {
-        "air_quality_score": float(air_score),
-        "water_cluster_probs": water_probs,
-        "land_signal": land_signal
+        "action": "NO ACTION",
+        "risk_score": last_result["risk_score"]
+    }
+
+
+# =========================
+# 4. STATUS (FRONTEND)
+# =========================
+@app.get("/status")
+def status():
+
+    return {
+        "air": state["air"],
+        "water": state["water"],
+        "land": state["land"],
+        "risk_score": last_result["risk_score"],
+        "decision": last_result["decision"]
     }
