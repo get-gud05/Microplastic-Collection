@@ -1,5 +1,5 @@
 # =========================
-# FASTAPI BACKEND (FINAL MERGED)
+# FINAL FASTAPI BACKEND
 # =========================
 
 from fastapi import FastAPI, Request
@@ -48,7 +48,6 @@ def get_time_slot(ts):
     else:
         return "air"
 
-
 # =========================
 # VALIDATION
 # =========================
@@ -62,7 +61,6 @@ def validate_data(slot, payload):
             return True
     except:
         return False
-
 
 # =========================
 # PREPROCESSING
@@ -87,9 +85,8 @@ def preprocess_data(slot, payload):
 
     elif slot == "land":
         return {
-            "land_emb": [0.1, 0.2, 0.3]  # TODO: replace with CNN
+            "land_emb": [0.1, 0.2, 0.3]  # replace later with CNN
         }
-
 
 # =========================
 # LABELING
@@ -109,15 +106,13 @@ def label_data(slot, payload):
         else: return "hazardous"
 
     elif slot == "land":
-        return "unknown"
-
+        return "image_received"
 
 # =========================
 # NORMALIZE
 # =========================
 def normalize(x):
     return x / (np.linalg.norm(x) + 1e-8)
-
 
 # =========================
 # FUSION
@@ -151,55 +146,61 @@ def run_fusion():
 
     return prob, decision
 
-
 # =========================
-# SYNC CHECK
+# SYNC CHECK (FIXED)
 # =========================
 def is_synced(max_delay=2):
-    ts = [state[s]["ts"] for s in state]
-    return max(ts) - min(ts) <= max_delay
+    valid_ts = [state[s]["ts"] for s in state if state[s]["data"] is not None]
 
+    if len(valid_ts) < 3:
+        return False
+
+    return max(valid_ts) - min(valid_ts) <= max_delay
 
 # =========================
-# INGEST (MERGED)
+# INGEST (FINAL)
 # =========================
 @app.post("/ingest")
 async def ingest(request: Request):
 
     content_type = request.headers.get("content-type")
-    ts = int(time.time())
+    ts = int(request.headers.get("x-timestamp", time.time()))
 
     # =========================
-    # 📸 IMAGE CASE
+    # IMAGE (ESP / IP CAM)
     # =========================
-    if content_type == "application/octet-stream":
+    if content_type and "application/octet-stream" in content_type:
 
         data = await request.body()
-        filename = f"image_{ts}.jpg"
+
+        # -------- IMAGE VALIDATION --------
+        if len(data) < 1000:
+            return {"status": "error", "message": "Image corrupted / too small"}
+
+        # -------- SAFE FILE NAME --------
+        filename = f"image_{ts}_{int(time.time()*1000)}.jpg"
 
         with open(filename, "wb") as f:
             f.write(data)
 
-        slot = get_time_slot(ts)
+        # -------- FORCE LAND SLOT --------
+        slot = "land"
 
-        # ensure correct slot
-        if slot != "land":
-            return {
-                "status": "error",
-                "message": "Image only allowed in land slot"
-            }
+        state["land"] = {
+            "data": preprocess_data("land", {}),
+            "ts": ts
+        }
 
-        processed = preprocess_data("land", {})
-        state["land"] = {"data": processed, "ts": ts}
         labels_state["land"] = "image_received"
 
         response = {
             "slot": "land",
-            "status": "image stored"
+            "status": "image stored",
+            "size": len(data)
         }
 
     # =========================
-    # 📡 JSON CASE
+    # SENSOR DATA (ESP32)
     # =========================
     else:
 
@@ -212,16 +213,10 @@ async def ingest(request: Request):
         slot = get_time_slot(ts)
 
         if sensor_type != slot:
-            return {
-                "status": "error",
-                "message": f"Expected {slot}, got {sensor_type}"
-            }
+            return {"status": "error", "message": f"Expected {slot}, got {sensor_type}"}
 
         if not validate_data(slot, payload):
-            return {
-                "status": "error",
-                "message": "Invalid data"
-            }
+            return {"status": "error", "message": "Invalid data"}
 
         label = label_data(slot, payload)
         labels_state[slot] = label
@@ -240,7 +235,7 @@ async def ingest(request: Request):
         }
 
     # =========================
-    # FUSION (COMMON)
+    # FUSION
     # =========================
     if all(state[s]["data"] is not None for s in state) and is_synced():
         prob, decision = run_fusion()
@@ -252,7 +247,6 @@ async def ingest(request: Request):
 
     return response
 
-
 # =========================
 # OTHER ENDPOINTS
 # =========================
@@ -263,13 +257,11 @@ def predict():
         "microplastic_detected": bool(last_result["decision"])
     }
 
-
 @app.get("/collect")
 def collect():
     if last_result["decision"] == 1:
         return {"action": "COLLECTION ACTIVATED"}
     return {"action": "NO ACTION"}
-
 
 @app.get("/status")
 def status():
