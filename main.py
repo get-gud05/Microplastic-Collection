@@ -1,10 +1,11 @@
 # =========================
-# FASTAPI BACKEND (FINAL)
+# FASTAPI BACKEND (FINAL MERGED)
 # =========================
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 import numpy as np
 import joblib
+import time
 
 app = FastAPI()
 
@@ -16,7 +17,7 @@ pca = joblib.load("fusion_pca.pkl")
 threshold = joblib.load("fusion_threshold.pkl")
 
 # -------------------------
-# GLOBAL STATE (WITH TIMESTAMP)
+# STATE
 # -------------------------
 state = {
     "land": {"data": None, "ts": 0},
@@ -40,10 +41,9 @@ last_result = {
 # =========================
 def get_time_slot(ts):
     t = int(ts) % 6
-
-    if 0 <= t < 2:
+    if t < 2:
         return "land"
-    elif 2 <= t < 4:
+    elif t < 4:
         return "water"
     else:
         return "air"
@@ -56,13 +56,10 @@ def validate_data(slot, payload):
     try:
         if slot == "water":
             return 0 <= payload["turbidity"] <= 4095
-
         elif slot == "air":
             return 0 <= payload["gas"] <= 4095
-
         elif slot == "land":
             return True
-
     except:
         return False
 
@@ -75,7 +72,6 @@ def preprocess_data(slot, payload):
     if slot == "water":
         turb = payload["turbidity"]
         turb_norm = turb / 4095
-
         return {
             "water_emb": [turb_norm, 0, 0],
             "water_probs": [1 - turb_norm, turb_norm]
@@ -84,7 +80,6 @@ def preprocess_data(slot, payload):
     elif slot == "air":
         gas = payload["gas"]
         gas_norm = gas / 4095
-
         return {
             "air_emb": [gas_norm, 0, 0],
             "air_score": gas_norm
@@ -92,7 +87,7 @@ def preprocess_data(slot, payload):
 
     elif slot == "land":
         return {
-            "land_emb": [0.1, 0.2, 0.3]  # placeholder
+            "land_emb": [0.1, 0.2, 0.3]  # TODO: replace with CNN
         }
 
 
@@ -103,30 +98,22 @@ def label_data(slot, payload):
 
     if slot == "water":
         turb = payload["turbidity"]
-
-        if turb < 1000:
-            return "clean"
-        elif turb < 2500:
-            return "moderate"
-        else:
-            return "polluted"
+        if turb < 1000: return "clean"
+        elif turb < 2500: return "moderate"
+        else: return "polluted"
 
     elif slot == "air":
         gas = payload["gas"]
-
-        if gas < 1000:
-            return "good"
-        elif gas < 2500:
-            return "moderate"
-        else:
-            return "hazardous"
+        if gas < 1000: return "good"
+        elif gas < 2500: return "moderate"
+        else: return "hazardous"
 
     elif slot == "land":
         return "unknown"
 
 
 # =========================
-# NORMALIZATION
+# NORMALIZE
 # =========================
 def normalize(x):
     return x / (np.linalg.norm(x) + 1e-8)
@@ -170,71 +157,92 @@ def run_fusion():
 # =========================
 def is_synced(max_delay=2):
     ts = [state[s]["ts"] for s in state]
-
     return max(ts) - min(ts) <= max_delay
 
 
 # =========================
-# INGEST
+# INGEST (MERGED)
 # =========================
 @app.post("/ingest")
-def ingest(data: dict):
+async def ingest(request: Request):
 
-    payload = data["data"]
-    sensor_type = data["type"]
-    ts = data["timestamp"]
+    content_type = request.headers.get("content-type")
+    ts = int(time.time())
 
-    # -------------------------
-    # TIME SLOT DECISION
-    # -------------------------
-    slot = get_time_slot(ts)
+    # =========================
+    # 📸 IMAGE CASE
+    # =========================
+    if content_type == "application/octet-stream":
 
-    # -------------------------
-    # SENSOR-TYPE VALIDATION
-    # -------------------------
-    if sensor_type != slot:
-        return {
-            "status": "error",
-            "message": f"Expected {slot}, got {sensor_type}"
+        data = await request.body()
+        filename = f"image_{ts}.jpg"
+
+        with open(filename, "wb") as f:
+            f.write(data)
+
+        slot = get_time_slot(ts)
+
+        # ensure correct slot
+        if slot != "land":
+            return {
+                "status": "error",
+                "message": "Image only allowed in land slot"
+            }
+
+        processed = preprocess_data("land", {})
+        state["land"] = {"data": processed, "ts": ts}
+        labels_state["land"] = "image_received"
+
+        response = {
+            "slot": "land",
+            "status": "image stored"
         }
 
-    # -------------------------
-    # DATA VALIDATION
-    # -------------------------
-    if not validate_data(slot, payload):
-        return {
-            "status": "error",
-            "message": "Invalid sensor data"
+    # =========================
+    # 📡 JSON CASE
+    # =========================
+    else:
+
+        data = await request.json()
+
+        payload = data["data"]
+        sensor_type = data["type"]
+        ts = data["timestamp"]
+
+        slot = get_time_slot(ts)
+
+        if sensor_type != slot:
+            return {
+                "status": "error",
+                "message": f"Expected {slot}, got {sensor_type}"
+            }
+
+        if not validate_data(slot, payload):
+            return {
+                "status": "error",
+                "message": "Invalid data"
+            }
+
+        label = label_data(slot, payload)
+        labels_state[slot] = label
+
+        processed = preprocess_data(slot, payload)
+
+        state[slot] = {
+            "data": processed,
+            "ts": ts
         }
 
-    # -------------------------
-    # LABELING
-    # -------------------------
-    label = label_data(slot, payload)
-    labels_state[slot] = label
+        response = {
+            "slot": slot,
+            "label": label,
+            "status": "stored"
+        }
 
-    # -------------------------
-    # PREPROCESSING
-    # -------------------------
-    processed = preprocess_data(slot, payload)
-
-    # STORE WITH TIMESTAMP
-    state[slot] = {
-        "data": processed,
-        "ts": ts
-    }
-
-    response = {
-        "slot": slot,
-        "label": label,
-        "status": "stored"
-    }
-
-    # -------------------------
-    # FUSION (ONLY IF SYNCED)
-    # -------------------------
+    # =========================
+    # FUSION (COMMON)
+    # =========================
     if all(state[s]["data"] is not None for s in state) and is_synced():
-
         prob, decision = run_fusion()
 
         last_result["risk_score"] = float(prob)
@@ -246,7 +254,7 @@ def ingest(data: dict):
 
 
 # =========================
-# PREDICT
+# OTHER ENDPOINTS
 # =========================
 @app.get("/predict")
 def predict():
@@ -256,27 +264,13 @@ def predict():
     }
 
 
-# =========================
-# COLLECT
-# =========================
 @app.get("/collect")
 def collect():
-
     if last_result["decision"] == 1:
-        return {
-            "action": "COLLECTION ACTIVATED",
-            "risk_score": last_result["risk_score"]
-        }
-
-    return {
-        "action": "NO ACTION",
-        "risk_score": last_result["risk_score"]
-    }
+        return {"action": "COLLECTION ACTIVATED"}
+    return {"action": "NO ACTION"}
 
 
-# =========================
-# STATUS
-# =========================
 @app.get("/status")
 def status():
     return {
