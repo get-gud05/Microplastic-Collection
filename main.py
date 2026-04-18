@@ -1,11 +1,10 @@
 # =========================
-# MAIN BACKEND (FASTAPI)
+# FASTAPI BACKEND (FINAL)
 # =========================
 
 from fastapi import FastAPI
 import numpy as np
 import joblib
-import time
 
 app = FastAPI()
 
@@ -17,9 +16,15 @@ pca = joblib.load("fusion_pca.pkl")
 threshold = joblib.load("fusion_threshold.pkl")
 
 # -------------------------
-# GLOBAL STATE (LATEST DATA)
+# GLOBAL STATE (WITH TIMESTAMP)
 # -------------------------
 state = {
+    "land": {"data": None, "ts": 0},
+    "water": {"data": None, "ts": 0},
+    "air": {"data": None, "ts": 0}
+}
+
+labels_state = {
     "land": None,
     "water": None,
     "air": None
@@ -30,13 +35,112 @@ last_result = {
     "decision": 0
 }
 
-# -------------------------
-# HELPER FUNCTIONS
-# -------------------------
+# =========================
+# TIME SLOT
+# =========================
+def get_time_slot(ts):
+    t = int(ts) % 6
+
+    if 0 <= t < 2:
+        return "land"
+    elif 2 <= t < 4:
+        return "water"
+    else:
+        return "air"
+
+
+# =========================
+# VALIDATION
+# =========================
+def validate_data(slot, payload):
+    try:
+        if slot == "water":
+            return 0 <= payload["turbidity"] <= 4095
+
+        elif slot == "air":
+            return 0 <= payload["gas"] <= 4095
+
+        elif slot == "land":
+            return True
+
+    except:
+        return False
+
+
+# =========================
+# PREPROCESSING
+# =========================
+def preprocess_data(slot, payload):
+
+    if slot == "water":
+        turb = payload["turbidity"]
+        turb_norm = turb / 4095
+
+        return {
+            "water_emb": [turb_norm, 0, 0],
+            "water_probs": [1 - turb_norm, turb_norm]
+        }
+
+    elif slot == "air":
+        gas = payload["gas"]
+        gas_norm = gas / 4095
+
+        return {
+            "air_emb": [gas_norm, 0, 0],
+            "air_score": gas_norm
+        }
+
+    elif slot == "land":
+        return {
+            "land_emb": [0.1, 0.2, 0.3]  # placeholder
+        }
+
+
+# =========================
+# LABELING
+# =========================
+def label_data(slot, payload):
+
+    if slot == "water":
+        turb = payload["turbidity"]
+
+        if turb < 1000:
+            return "clean"
+        elif turb < 2500:
+            return "moderate"
+        else:
+            return "polluted"
+
+    elif slot == "air":
+        gas = payload["gas"]
+
+        if gas < 1000:
+            return "good"
+        elif gas < 2500:
+            return "moderate"
+        else:
+            return "hazardous"
+
+    elif slot == "land":
+        return "unknown"
+
+
+# =========================
+# NORMALIZATION
+# =========================
 def normalize(x):
     return x / (np.linalg.norm(x) + 1e-8)
 
-def run_fusion(land, water, air):
+
+# =========================
+# FUSION
+# =========================
+def run_fusion():
+
+    land = state["land"]["data"]
+    water = state["water"]["data"]
+    air = state["air"]["data"]
+
     air_emb = normalize(np.array(air["air_emb"]))
     air_score = air["air_score"]
 
@@ -61,51 +165,77 @@ def run_fusion(land, water, air):
     return prob, decision
 
 
-# -------------------------
-# OPTIONAL: TIME SLOT LOGIC
-# -------------------------
-def get_current_slot():
-    t = int(time.time()) % 6
+# =========================
+# SYNC CHECK
+# =========================
+def is_synced(max_delay=2):
+    ts = [state[s]["ts"] for s in state]
 
-    if 0 <= t < 2:
-        return "land"
-    elif 2 <= t < 4:
-        return "water"
-    else:
-        return "air"
+    return max(ts) - min(ts) <= max_delay
 
 
 # =========================
-# 1. INGEST (MAIN ENTRY)
+# INGEST
 # =========================
 @app.post("/ingest")
 def ingest(data: dict):
 
-    # OPTION A (recommended): slot from hardware
-    slot = data.get("slot")
-
-    # OPTION B: backend decides slot
-    if slot is None:
-        slot = get_current_slot()
-
     payload = data["data"]
+    sensor_type = data["type"]
+    ts = data["timestamp"]
 
-    state[slot] = payload
+    # -------------------------
+    # TIME SLOT DECISION
+    # -------------------------
+    slot = get_time_slot(ts)
+
+    # -------------------------
+    # SENSOR-TYPE VALIDATION
+    # -------------------------
+    if sensor_type != slot:
+        return {
+            "status": "error",
+            "message": f"Expected {slot}, got {sensor_type}"
+        }
+
+    # -------------------------
+    # DATA VALIDATION
+    # -------------------------
+    if not validate_data(slot, payload):
+        return {
+            "status": "error",
+            "message": "Invalid sensor data"
+        }
+
+    # -------------------------
+    # LABELING
+    # -------------------------
+    label = label_data(slot, payload)
+    labels_state[slot] = label
+
+    # -------------------------
+    # PREPROCESSING
+    # -------------------------
+    processed = preprocess_data(slot, payload)
+
+    # STORE WITH TIMESTAMP
+    state[slot] = {
+        "data": processed,
+        "ts": ts
+    }
 
     response = {
-        "active_slot": slot,
+        "slot": slot,
+        "label": label,
         "status": "stored"
     }
 
     # -------------------------
-    # RUN FUSION IF ALL AVAILABLE
+    # FUSION (ONLY IF SYNCED)
     # -------------------------
-    if all(state.values()):
-        prob, decision = run_fusion(
-            state["land"],
-            state["water"],
-            state["air"]
-        )
+    if all(state[s]["data"] is not None for s in state) and is_synced():
+
+        prob, decision = run_fusion()
 
         last_result["risk_score"] = float(prob)
         last_result["decision"] = int(decision)
@@ -116,7 +246,7 @@ def ingest(data: dict):
 
 
 # =========================
-# 2. PREDICT
+# PREDICT
 # =========================
 @app.get("/predict")
 def predict():
@@ -127,13 +257,12 @@ def predict():
 
 
 # =========================
-# 3. COLLECTION TRIGGER
+# COLLECT
 # =========================
 @app.get("/collect")
 def collect():
 
     if last_result["decision"] == 1:
-        # HERE: trigger ESP / relay / motor
         return {
             "action": "COLLECTION ACTIVATED",
             "risk_score": last_result["risk_score"]
@@ -146,15 +275,12 @@ def collect():
 
 
 # =========================
-# 4. STATUS (FRONTEND)
+# STATUS
 # =========================
 @app.get("/status")
 def status():
-
     return {
-        "air": state["air"],
-        "water": state["water"],
-        "land": state["land"],
+        "labels": labels_state,
         "risk_score": last_result["risk_score"],
         "decision": last_result["decision"]
     }
