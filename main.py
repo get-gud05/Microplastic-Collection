@@ -21,7 +21,7 @@ threshold = joblib.load("fusion_threshold.pkl")
 # -------------------------
 # IP CAMERA URL (IPv6 supported)
 # -------------------------
-IP_CAMERA_URL = "http://[2401:4900:bbab:7818:289b:13ff:fe5f:af6]:8080"
+IP_CAMERA_URL = "https://10.18.186.97:8080"
 
 # -------------------------
 # IMAGE SAVE DIRECTORY
