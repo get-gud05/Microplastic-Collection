@@ -233,35 +233,7 @@ async def ingest(request: Request):
         "label": label,
         "status": "stored"
     }
-
-    # =========================
-    # WATER TRIGGER → IMAGE FETCH
-    # =========================
-    if slot == "water":
-
-        turbidity_value = processed["water_emb"][0]
-
-        # trigger condition (you will replace with ML model)
-        if turbidity_value > 0.5:
-
-            image_data = fetch_image_from_camera()
-
-            if image_data is not None:
-
-                filename = f"image_{ts}_{int(time.time()*1000)}.jpg"
-
-                with open(filename, "wb") as f:
-                    f.write(image_data)
-
-                state["land"] = {
-                    "data": preprocess_data("land", {}),
-                    "ts": ts
-                }
-
-                labels_state["land"] = "image_captured"
-
-                response["image"] = "captured"
-
+    
     # =========================
     # FUSION
     # =========================
