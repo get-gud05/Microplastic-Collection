@@ -21,7 +21,7 @@ threshold = joblib.load("fusion_threshold.pkl")
 # -------------------------
 # IP CAMERA URL (IPv6 supported)
 # -------------------------
-IP_CAMERA_URL = "https://degree-crouch-oxidation.ngrok-free.dev "
+IP_CAMERA_URL = "https://degree-crouch-oxidation.ngrok-free.dev"
 # -------------------------
 # IMAGE SAVE DIRECTORY
 # -------------------------
