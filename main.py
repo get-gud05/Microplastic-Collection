@@ -223,7 +223,7 @@ async def ingest(request: Request):
     if slot == "land":
         print("📸 LAND SLOT - CAPTURING IMAGE")
 
-        image_data = fetch_image_from_camera()
+        image_data = fetch_image_from_camera(IP_CAMERA_URL)
 
         if image_data is not None:
             filename = os.path.join(IMAGE_DIR, f"image_{ts}_{int(time.time() * 1000)}.jpg")
