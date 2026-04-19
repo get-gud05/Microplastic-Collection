@@ -233,7 +233,38 @@ async def ingest(request: Request):
         "label": label,
         "status": "stored"
     }
-    
+
+    # =========================
+# LAND SLOT → ALWAYS CAPTURE IMAGE
+# =========================
+if slot == "land":
+
+    print("📸 LAND SLOT - CAPTURING IMAGE")
+
+    image_data = fetch_image_from_camera()
+
+    if image_data is not None:
+
+        filename = f"image_{ts}_{int(time.time()*1000)}.jpg"
+
+        with open(filename, "wb") as f:
+            f.write(image_data)
+
+        state["land"] = {
+            "data": preprocess_data("land", {}),
+            "ts": ts
+        }
+
+        labels_state["land"] = "image_captured"
+
+        response["image"] = "captured"
+
+        print("✅ IMAGE SAVED")
+
+    else:
+        response["image"] = "failed"
+        print("❌ IMAGE FAILED")
+        
     # =========================
     # FUSION
     # =========================
