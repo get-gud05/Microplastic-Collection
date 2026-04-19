@@ -237,33 +237,33 @@ async def ingest(request: Request):
     # =========================
 # LAND SLOT → ALWAYS CAPTURE IMAGE
 # =========================
-if slot == "land":
+    if slot == "land":
 
-    print("📸 LAND SLOT - CAPTURING IMAGE")
+        print("📸 LAND SLOT - CAPTURING IMAGE")
 
-    image_data = fetch_image_from_camera()
+        image_data = fetch_image_from_camera()
 
-    if image_data is not None:
+        if image_data is not None:
 
-        filename = f"image_{ts}_{int(time.time()*1000)}.jpg"
+            filename = f"image_{ts}_{int(time.time()*1000)}.jpg"
 
-        with open(filename, "wb") as f:
-            f.write(image_data)
+            with open(filename, "wb") as f:
+                f.write(image_data)
 
-        state["land"] = {
-            "data": preprocess_data("land", {}),
-            "ts": ts
-        }
+            state["land"] = {
+                "data": preprocess_data("land", {}),
+                "ts": ts
+            }
 
-        labels_state["land"] = "image_captured"
+            labels_state["land"] = "image_captured"
 
-        response["image"] = "captured"
+            response["image"] = "captured"
 
-        print("✅ IMAGE SAVED")
+            print("✅ IMAGE SAVED")
 
-    else:
-        response["image"] = "failed"
-        print("❌ IMAGE FAILED")
+        else:
+            response["image"] = "failed"
+            print("❌ IMAGE FAILED")
         
     # =========================
     # FUSION
