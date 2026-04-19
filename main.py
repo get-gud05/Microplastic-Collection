@@ -21,8 +21,7 @@ threshold = joblib.load("fusion_threshold.pkl")
 # -------------------------
 # IP CAMERA URL (IPv6 supported)
 # -------------------------
-IP_CAMERA_URL = "https://10.18.186.97:8080"
-
+IP_CAMERA_URL = "https://sprint-difficult-washtub.ngrok-free.dev"
 # -------------------------
 # IMAGE SAVE DIRECTORY
 # -------------------------
