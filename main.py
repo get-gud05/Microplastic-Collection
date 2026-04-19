@@ -48,7 +48,20 @@ last_result = {
     "risk_score": 0.0,
     "decision":   0,
 }
+@app.get("/force-land")
+def force_land():
+    print("🔥 FORCE LAND CALLED")
 
+    img = fetch_image_from_camera()
+
+    if img:
+        filename = f"test_{int(time.time())}.jpg"
+        with open(filename, "wb") as f:
+            f.write(img)
+
+        return {"status": "success", "file": filename}
+
+    return {"status": "failed"}
 # =========================
 # FETCH IMAGE FROM CAMERA
 # =========================
