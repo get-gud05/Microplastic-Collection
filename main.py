@@ -46,10 +46,15 @@ last_result = {
 # FETCH IMAGE FROM CAMERA
 # =========================
 def fetch_image_from_camera():
+    print("📡 Trying to fetch image...")
+
     try:
         with requests.get(IP_CAMERA_URL, stream=True, timeout=5) as stream:
 
+            print("Status:", stream.status_code)
+
             if stream.status_code != 200:
+                print("❌ Bad response")
                 return None
 
             bytes_data = b""
@@ -61,14 +66,13 @@ def fetch_image_from_camera():
                 b = bytes_data.find(b'\xff\xd9')
 
                 if a != -1 and b != -1:
+                    print("✅ Frame extracted")
                     return bytes_data[a:b+2]
-
-                if len(bytes_data) > 500000:
-                    bytes_data = bytes_data[-100000:]
 
         return None
 
-    except:
+    except Exception as e:
+        print("❌ Camera error:", e)
         return None
 
 # =========================
