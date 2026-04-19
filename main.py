@@ -53,27 +53,23 @@ last_result = {
 # FETCH IMAGE FROM CAMERA
 # =========================
 def fetch_image_from_camera():
-    print("📡 Trying to fetch image...")
+    print("📡 Reading MJPEG stream...")
     try:
-        with requests.get(IP_CAMERA_URL, stream=True, timeout=5) as stream:
-            print("Status:", stream.status_code)
+        url = IP_CAMERA_URL.rstrip("/") + "/video"
+        with requests.get(url, stream=True, timeout=5) as stream:
             if stream.status_code != 200:
-                print("❌ Bad response")
+                print("❌ Bad response:", stream.status_code)
                 return None
 
             bytes_data = b""
             for chunk in stream.iter_content(chunk_size=1024):
                 bytes_data += chunk
-
-                start = bytes_data.find(b'\xff\xd8')   # BUG FIX: was 'b', shadows builtin
+                start = bytes_data.find(b'\xff\xd8')
                 end   = bytes_data.find(b'\xff\xd9')
-
                 if start != -1 and end != -1:
                     print("✅ Frame extracted")
                     return bytes_data[start:end + 2]
-
         return None
-
     except Exception as e:
         print("❌ Camera error:", e)
         return None
